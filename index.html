@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Do'kon</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+<style>
+  * { box-sizing: border-box; touch-action: manipulation; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--tg-theme-bg-color, #f4f5f7);
+    color: var(--tg-theme-text-color, #222);
+    margin: 0;
+    padding: 16px;
+  }
+  .wrap { max-width: 460px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; text-align: center; }
+  .sub { font-size: 12px; color: #999; text-align: center; margin-bottom: 16px; }
+
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tabs button {
+    flex: 1; padding: 8px 0; border: none; border-radius: 8px;
+    background: #eef1f5; color: #666; font-size: 13px; cursor: pointer;
+  }
+  .tabs button.active { background: #4f7cff; color: #fff; font-weight: 600; }
+
+  .subTabs { display: flex; gap: 6px; margin-bottom: 14px; }
+  .subTabs button {
+    flex: 1; padding: 6px 0; border: 1px solid #ddd; border-radius: 8px;
+    background: none; color: #666; font-size: 12px; cursor: pointer;
+  }
+  .subTabs button.active { background: #4f7cff; color: #fff; border-color: #4f7cff; font-weight: 600; }
+
+  .addProductBtn {
+    width: 100%; padding: 12px; border: none; border-radius: 10px; background: #2ecc71;
+    color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; margin-bottom: 16px;
+  }
+
+  #productsView {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  }
+  .productCard {
+    background: var(--tg-theme-secondary-bg-color, #fff);
+    border-radius: 12px; overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    display: flex; flex-direction: column;
+  }
+  .productCard img {
+    width: 100%; height: 150px; object-fit: cover; display: block; background: #eee;
+  }
+  .productBody { padding: 10px; display: flex; flex-direction: column; flex: 1; }
+  .productName {
+    font-size: 13px; font-weight: 700; margin-bottom: 4px; line-height: 1.3;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .productDesc {
+    font-size: 11px; color: #888; margin-bottom: 6px; line-height: 1.3;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .productPrice { font-size: 14px; font-weight: 700; color: #4f7cff; margin-bottom: 8px; margin-top: auto; }
+  .orderBtn {
+    width: 100%; padding: 8px; border: none; border-radius: 8px; background: #4f7cff;
+    color: #fff; font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+  .orderBtn:disabled { opacity: 0.6; }
+  .adminRow { display: flex; gap: 6px; margin-top: 6px; }
+  .adminRow button {
+    flex: 1; padding: 6px; border: 1px solid #ddd; border-radius: 8px; background: none;
+    font-size: 11px; cursor: pointer; color: #666;
+  }
+
+  .empty { text-align: center; color: #aaa; font-size: 13px; padding: 30px 0; grid-column: 1 / -1; }
+  .status { font-size: 12px; text-align: center; margin-top: 10px; min-height: 16px; font-weight: 600; }
+  .status.ok { color: #2ecc71; }
+  .status.fail { color: #e74c3c; }
+  .status.info { color: #999; }
+
+  .claimBox {
+    background: #fff7e6; border: 1px solid #ffe1a8; border-radius: 12px;
+    padding: 14px; text-align: center; margin-bottom: 16px; font-size: 13px; color: #8a6100;
+  }
+  .claimBox button {
+    margin-top: 10px; padding: 10px 16px; border: none; border-radius: 8px;
+    background: #b5790a; color: #fff; font-weight: 600; cursor: pointer;
+  }
+
+  .orderRow {
+    background: var(--tg-theme-secondary-bg-color, #fff);
+    border-radius: 12px; padding: 12px; margin-bottom: 10px; font-size: 13px;
+    display: flex; gap: 10px;
+  }
+  .orderRow img {
+    width: 56px; height: 56px; border-radius: 8px; object-fit: cover; background: #eee; flex-shrink: 0;
+  }
+  .orderRow .body { flex: 1; min-width: 0; }
+  .orderRow .top { display: flex; justify-content: space-between; font-weight: 700; margin-bottom: 4px; gap: 6px; }
+  .orderRow .line { color: #666; margin-bottom: 2px; }
+  .badge {
+    display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 20px;
+    margin-top: 4px;
+  }
+  .badge.pending { background: #fff2d9; color: #b5790a; }
+  .badge.accepted { background: #e3f9ea; color: #1f8a4c; }
+  .acceptBtn {
+    margin-top: 8px; width: 100%; padding: 8px; border: none; border-radius: 8px;
+    background: #2ecc71; color: #fff; font-size: 12px; font-weight: 700; cursor: pointer;
+  }
+
+  .overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+    display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 10;
+  }
+  .overlay.hidden { display: none; }
+  .overlayCard {
+    background: #fff; border-radius: 16px; padding: 20px; width: 100%; max-width: 380px;
+    max-height: 85vh; overflow-y: auto;
+  }
+  .overlayCard h2 { font-size: 16px; margin: 0 0 14px; text-align: center; }
+  .formRow { margin-bottom: 12px; }
+  .formRow label { display: block; font-size: 13px; color: #666; margin-bottom: 6px; }
+  .formRow input, .formRow textarea, .formRow select {
+    width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 8px;
+    font-size: 16px; background: #f7f8fa; color: #222; font-family: inherit;
+  }
+  .formRow textarea { resize: vertical; min-height: 60px; }
+  .phoneRow { display: flex; align-items: center; gap: 6px; }
+  .phoneRow .prefix {
+    padding: 10px 8px; background: #eef1f5; border-radius: 8px; font-size: 16px; font-weight: 600; color: #555;
+  }
+  .sizeOptions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .sizeOptions button {
+    padding: 8px 14px; border: 1px solid #ddd; border-radius: 8px; background: #f7f8fa;
+    font-size: 14px; cursor: pointer; color: #333;
+  }
+  .sizeOptions button.selected { background: #4f7cff; color: #fff; border-color: #4f7cff; }
+  .overlayBtn {
+    width: 100%; padding: 12px; border: none; border-radius: 10px; background: #4f7cff;
+    color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; margin-top: 6px;
+  }
+  .overlayBtn:disabled { opacity: 0.6; }
+  .overlayBtn.danger { background: #e74c3c; }
+  .overlayBtnSecondary {
+    width: 100%; padding: 10px; border: none; background: none; color: #999;
+    font-size: 13px; cursor: pointer; margin-top: 8px;
+  }
+
+  /* ===== Telegram tungi (dark) rejimi ===== */
+  body.tg-dark .sub,
+  body.tg-dark .productDesc,
+  body.tg-dark .empty,
+  body.tg-dark .status.info,
+  body.tg-dark .formRow label,
+  body.tg-dark .overlayBtnSecondary,
+  body.tg-dark .orderRow .line {
+    color: var(--tg-theme-hint-color, #aaa);
+  }
+  body.tg-dark .tabs button,
+  body.tg-dark .subTabs button {
+    background: rgba(255,255,255,0.08);
+    color: var(--tg-theme-hint-color, #aaa);
+    border-color: rgba(255,255,255,0.15);
+  }
+  body.tg-dark .productName,
+  body.tg-dark .overlayCard h2,
+  body.tg-dark .orderRow .top {
+    color: var(--tg-theme-text-color, #fff);
+  }
+  body.tg-dark .adminRow button,
+  body.tg-dark .sizeOptions button {
+    border-color: rgba(255,255,255,0.2);
+    color: var(--tg-theme-hint-color, #aaa);
+    background: rgba(255,255,255,0.06);
+  }
+  body.tg-dark .overlayCard {
+    background: var(--tg-theme-secondary-bg-color, #222);
+  }
+  body.tg-dark .formRow input, body.tg-dark .formRow textarea, body.tg-dark .formRow select {
+    background: rgba(255,255,255,0.08);
+    color: var(--tg-theme-text-color, #fff);
+    border-color: rgba(255,255,255,0.15);
+  }
+  body.tg-dark .phoneRow .prefix {
+    background: rgba(255,255,255,0.1);
+    color: var(--tg-theme-text-color, #fff);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🛍 Do'kon</h1>
+  <div class="sub" id="subLine">Yuklanmoqda...</div>
+
+  <div id="claimSection"></div>
+
+  <div class="tabs" id="tabsRow" style="display:none;">
+    <button id="tabProducts" class="active" onclick="showView('products')">Mahsulotlar</button>
+    <button id="tabOrders" onclick="showView('orders')">Buyurtmalar</button>
+  </div>
+
+  <button class="addProductBtn" id="addProductBtn" style="display:none;" onclick="openProductForm()">➕ Mahsulot qo'shish</button>
+
+  <div class="subTabs" id="adminOrderSubTabs" style="display:none;">
+    <button id="subTabNew" class="active" onclick="showOrderSubView('new')">🆕 Yangi</button>
+    <button id="subTabAccepted" onclick="showOrderSubView('accepted')">✅ Qabul qilingan</button>
+  </div>
+
+  <div id="productsView"></div>
+  <div id="ordersView" style="display:none;"></div>
+
+  <div class="status" id="statusMsg"></div>
+</div>
+
+<div class="overlay hidden" id="productOverlay">
+  <div class="overlayCard">
+    <h2 id="productFormTitle">Yangi mahsulot</h2>
+    <div class="formRow">
+      <label>Nomi</label>
+      <input type="text" id="pName" placeholder="Masalan: Erkaklar kurtkasi">
+    </div>
+    <div class="formRow">
+      <label>Narxi (so'm)</label>
+      <input type="text" id="pPrice" placeholder="Masalan: 45,000" inputmode="numeric" oninput="onPriceInput()">
+    </div>
+    <div class="formRow">
+      <label>O'lchamlar (ixtiyoriy, vergul bilan)</label>
+      <input type="text" id="pSizes" placeholder="Masalan: S, M, L, XL">
+    </div>
+    <div class="formRow">
+      <label>Tavsif (ixtiyoriy)</label>
+      <textarea id="pDesc" placeholder="Qisqacha ma'lumot"></textarea>
+    </div>
+    <div class="formRow">
+      <label>Rasm (ixtiyoriy)</label>
+      <input type="file" id="pImageFile" accept="image/*" onchange="onImageFileChange(event)">
+      <img id="pImagePreview" style="display:none; width:100%; margin-top:8px; border-radius:8px;">
+    </div>
+    <button class="overlayBtn" onclick="saveProduct()">Saqlash</button>
+    <button class="overlayBtn danger" id="deleteProductBtn" onclick="deleteProduct()" style="display:none;">O'chirish</button>
+    <button class="overlayBtnSecondary" onclick="closeProductForm()">Bekor qilish</button>
+  </div>
+</div>
+
+<div class="overlay hidden" id="orderOverlay">
+  <div class="overlayCard">
+    <h2>Buyurtma berish</h2>
+    <p style="font-size:13px; color:#888; text-align:center; margin-bottom:14px;" id="orderProductLabel"></p>
+
+    <div class="formRow" id="sizeFormRow" style="display:none;">
+      <label>O'lcham</label>
+      <div class="sizeOptions" id="sizeOptions"></div>
+    </div>
+
+    <div class="formRow">
+      <label>Soni</label>
+      <select id="oQty">
+        <option value="1">1 dona</option>
+        <option value="2">2 dona</option>
+        <option value="3">3 dona</option>
+        <option value="4">4 dona</option>
+        <option value="5">5 dona</option>
+        <option value="6">6 dona</option>
+        <option value="7">7 dona</option>
+        <option value="8">8 dona</option>
+        <option value="9">9 dona</option>
+        <option value="10">10 dona</option>
+      </select>
+    </div>
+
+    <div class="formRow">
+      <label>Ismingiz</label>
+      <input type="text" id="oName" placeholder="Ismingiz">
+    </div>
+    <div class="formRow">
+      <label>Telefon raqamingiz</label>
+      <div class="phoneRow">
+        <span class="prefix">+998</span>
+        <input type="tel" id="oPhone" placeholder="90 380 90 80" inputmode="numeric" oninput="onPhoneInput()">
+      </div>
+    </div>
+    <div class="formRow">
+      <label>Manzil</label>
+      <textarea id="oAddress" placeholder="Yetkazib berish manzili"></textarea>
+    </div>
+    <button class="overlayBtn" id="submitOrderBtn" onclick="submitOrder()">Buyurtma berish</button>
+    <button class="overlayBtnSecondary" onclick="closeOrderForm()">Bekor qilish</button>
+  </div>
+</div>
+
+<script>
+const tg = window.Telegram ? window.Telegram.WebApp : null;
+if (tg) { tg.ready(); tg.expand(); }
+
+function applyTelegramTheme() {
+  if (tg && tg.colorScheme === "dark") document.body.classList.add("tg-dark");
+  else document.body.classList.remove("tg-dark");
+}
+applyTelegramTheme();
+if (tg && tg.onEvent) tg.onEvent("themeChanged", applyTelegramTheme);
+
+let lastTouchEnd = 0;
+document.addEventListener('touchend', function (event) {
+  const tag = event.target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+  const now = Date.now();
+  if (now - lastTouchEnd <= 350) event.preventDefault();
+  lastTouchEnd = now;
+}, { passive: false });
+document.addEventListener('gesturestart', function (event) { event.preventDefault(); });
+
+// ====== FIREBASE (mavjud "Harajatlar" loyihasi) ======
+const firebaseConfig = {
+  apiKey: "AIzaSyALoMnUIFP1r5Ol0XD15jVrpKDmCjbk5A0",
+  authDomain: "harajatlar-2c00d.firebaseapp.com",
+  databaseURL: "https://harajatlar-2c00d-default-rtdb.firebaseio.com",
+  projectId: "harajatlar-2c00d",
+  storageBucket: "harajatlar-2c00d.firebasestorage.app",
+  messagingSenderId: "905274239250",
+  appId: "1:905274239250:web:d2c430116321d27ebbebcb"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const shopRef = db.ref("shop");
+const productsRef = shopRef.child("products");
+const ordersRef = shopRef.child("orders");
+const adminIdRef = shopRef.child("adminId");
+
+// ====== TELEGRAM BOT (buyurtma xabarlarini yuborish uchun) ======
+const BOT_TOKEN = "8042343551:AAHIMer_WaT68alPha8BRheFNsvPhXSK9JY";
+// =======================================================
+
+function showMsg(text) {
+  if (tg && tg.showAlert) tg.showAlert(text);
+  else alert(text);
+}
+function setStatus(msg, cls) {
+  const el = document.getElementById("statusMsg");
+  el.textContent = msg;
+  el.className = "status" + (cls ? " " + cls : "");
+}
+
+const tgUser = tg && tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user : null;
+const myId = tgUser ? String(tgUser.id) : null;
+const myName = tgUser ? (tgUser.first_name || "Foydalanuvchi") : "Mehmon";
+
+let products = {};
+let orders = {};
+let adminId = null;
+let isAdmin = false;
+let editingProductKey = null;
+let pendingImageData = null;
+let orderingProductKey = null;
+let selectedSize = null;
+let isSubmittingOrder = false;
+let orderSubView = "new";
+
+document.getElementById("subLine").textContent = "Siz: " + myName;
+
+// ====== NARX FORMATLASH ======
+function parsePriceInput(str) {
+  return Number(String(str).replace(/[^0-9]/g, "")) || 0;
+}
+function onPriceInput() {
+  const input = document.getElementById("pPrice");
+  const raw = parsePriceInput(input.value);
+  const cursorFromEnd = input.value.length - input.selectionStart;
+  input.value = raw ? raw.toLocaleString("en-US") : "";
+  const pos = Math.max(0, input.value.length - cursorFromEnd);
+  input.setSelectionRange(pos, pos);
+}
+
+// ====== TELEFON FORMATLASH (+998 XX XXX XX XX) ======
+function onPhoneInput() {
+  const input = document.getElementById("oPhone");
+  let digits = input.value.replace(/[^0-9]/g, "").slice(0, 9);
+  let formatted = "";
+  if (digits.length > 0) formatted += digits.slice(0, 2);
+  if (digits.length > 2) formatted += " " + digits.slice(2, 5);
+  if (digits.length > 5) formatted += " " + digits.slice(5, 7);
+  if (digits.length > 7) formatted += " " + digits.slice(7, 9);
+  input.value = formatted;
+}
+function getFullPhone() {
+  const digits = document.getElementById("oPhone").value.replace(/[^0-9]/g, "");
+  return "+998 " + document.getElementById("oPhone").value;
+}
+
+// ====== RASM YUKLASH ======
+function onImageFileChange(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function (ev) {
+    const img = new Image();
+    img.onload = function () {
+      const maxW = 800;
+      const scale = Math.min(1, maxW / img.width);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      pendingImageData = canvas.toDataURL("image/jpeg", 0.7);
+      const preview = document.getElementById("pImagePreview");
+      preview.src = pendingImageData;
+      preview.style.display = "block";
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+// ====== ADMIN BELGILASH ======
+adminIdRef.on("value", (snap) => {
+  adminId = snap.val() || null;
+  isAdmin = !!(myId && adminId && myId === adminId);
+  renderClaimSection();
+  document.getElementById("tabsRow").style.display = "flex";
+  document.getElementById("tabOrders").textContent = isAdmin ? "📋 Buyurtmalar" : "🧾 Buyurtmalarim";
+  document.getElementById("addProductBtn").style.display = "none";
+  renderProducts();
+  renderOrders();
+});
+
+function renderClaimSection() {
+  const el = document.getElementById("claimSection");
+  if (adminId === null && myId) {
+    el.innerHTML = '<div class="claimBox">Bu do\'kon uchun hali admin belgilanmagan.<br>Agar bu sizning do\'koningiz bo\'lsa:<br><button onclick="claimAdmin()">Men adminman</button></div>';
+  } else {
+    el.innerHTML = "";
+  }
+}
+
+async function claimAdmin() {
+  if (!myId) {
+    showMsg("Telegram orqali ochilmagani uchun aniqlab bo'lmadi.");
+    return;
+  }
+  try {
+    await adminIdRef.set(myId);
+  } catch (e) {
+    showMsg("Xatolik: " + e.message);
+  }
+}
+
+productsRef.on("value", (snap) => {
+  products = snap.val() || {};
+  renderProducts();
+});
+
+ordersRef.on("value", (snap) => {
+  orders = snap.val() || {};
+  renderOrders();
+});
+
+// ====== MAHSULOTLAR RO'YXATI ======
+function renderProducts() {
+  const el = document.getElementById("productsView");
+  const keys = Object.keys(products);
+  if (keys.length === 0) {
+    el.innerHTML = '<div class="empty">Hali mahsulot qo\'shilmagan</div>';
+  } else {
+    keys.sort((a, b) => (products[b].ts || 0) - (products[a].ts || 0));
+    el.innerHTML = "";
+    keys.forEach(key => {
+      const p = products[key];
+      const card = document.createElement("div");
+      card.className = "productCard";
+      let html = "";
+      if (p.image) html += '<img src="' + p.image + '" onerror="this.style.display=\'none\'">';
+      html += '<div class="productBody">';
+      html += '<div class="productName">' + p.name + '</div>';
+      if (p.desc) html += '<div class="productDesc">' + p.desc + '</div>';
+      html += '<div class="productPrice">' + p.price + '</div>';
+      html += '<button class="orderBtn" onclick="openOrderForm(\'' + key + '\')">🛒 Buyurtma berish</button>';
+      if (isAdmin) {
+        html += '<div class="adminRow"><button onclick="openProductForm(\'' + key + '\')">✏️ Tahrirlash</button></div>';
+      }
+      html += '</div>';
+      card.innerHTML = html;
+      el.appendChild(card);
+    });
+  }
+  document.getElementById("addProductBtn").style.display =
+    (isAdmin && document.getElementById("productsView").style.display !== "none") ? "block" : "none";
+}
+
+// ====== BUYURTMALAR RO'YXATI ======
+function renderOrders() {
+  document.getElementById("adminOrderSubTabs").style.display =
+    (isAdmin && document.getElementById("ordersView").style.display !== "none") ? "flex" : "none";
+
+  const el = document.getElementById("ordersView");
+  let keys = Object.keys(orders);
+
+  if (isAdmin) {
+    keys = keys.filter(k => (orders[k].status || "new") === orderSubView);
+  } else {
+    keys = keys.filter(k => orders[k].customerId === myId);
+  }
+
+  if (keys.length === 0) {
+    el.innerHTML = '<div class="empty">' + (isAdmin ? "Bu bo'limda buyurtma yo'q" : "Hali buyurtmangiz yo'q") + '</div>';
+    return;
+  }
+
+  keys.sort((a, b) => (orders[b].ts || 0) - (orders[a].ts || 0));
+  el.innerHTML = "";
+  keys.forEach(key => {
+    const o = orders[key];
+    const row = document.createElement("div");
+    row.className = "orderRow";
+    const date = o.ts ? new Date(o.ts).toLocaleString("uz-UZ") : "";
+    const status = o.status || "new";
+
+    let img = o.image ? '<img src="' + o.image + '">' : '<img>';
+    let body = '<div class="body">';
+    body += '<div class="top"><span>' + o.productName + (o.size ? " (" + o.size + ")" : "") + ' × ' + (o.qty || 1) + '</span><span>' + o.price + '</span></div>';
+
+    if (isAdmin) {
+      body += '<div class="line">👤 ' + o.customerName + '</div>';
+      body += '<div class="line">📞 ' + o.phone + '</div>';
+      body += '<div class="line">📍 ' + o.address + '</div>';
+    }
+    body += '<div class="line">🕒 ' + date + '</div>';
+
+    if (isAdmin) {
+      if (status === "new") {
+        body += '<button class="acceptBtn" onclick="acceptOrder(\'' + key + '\')">✅ Qabul qilish</button>';
+      } else {
+        body += '<span class="badge accepted">✅ Qabul qilingan</span>';
+      }
+    } else {
+      if (status === "accepted") {
+        body += '<span class="badge accepted">✅ Buyurtmangiz qabul qilindi</span>';
+      } else {
+        body += '<span class="badge pending">⏳ Kutilmoqda</span>';
+      }
+    }
+    body += '</div>';
+
+    row.innerHTML = img + body;
+    el.appendChild(row);
+  });
+}
+
+function showOrderSubView(v) {
+  orderSubView = v;
+  document.getElementById("subTabNew").classList.toggle("active", v === "new");
+  document.getElementById("subTabAccepted").classList.toggle("active", v === "accepted");
+  renderOrders();
+}
+
+async function acceptOrder(key) {
+  try {
+    await ordersRef.child(key).update({ status: "accepted" });
+    const o = orders[key];
+    if (o && o.customerId) {
+      notifyCustomerAccepted(o);
+    }
+  } catch (e) {
+    setStatus("Xatolik: " + e.message, "fail");
+  }
+}
+
+function showView(v) {
+  document.getElementById("productsView").style.display = v === "products" ? "block" : "none";
+  document.getElementById("ordersView").style.display = v === "orders" ? "block" : "none";
+  document.getElementById("tabProducts").classList.toggle("active", v === "products");
+  document.getElementById("tabOrders").classList.toggle("active", v === "orders");
+  renderProducts();
+  renderOrders();
+}
+
+// ====== MAHSULOT QO'SHISH / TAHRIRLASH ======
+
+function openProductForm(key) {
+  editingProductKey = key || null;
+  pendingImageData = null;
+  const overlay = document.getElementById("productOverlay");
+  const title = document.getElementById("productFormTitle");
+  const delBtn = document.getElementById("deleteProductBtn");
+  const preview = document.getElementById("pImagePreview");
+  document.getElementById("pImageFile").value = "";
+
+  if (editingProductKey) {
+    const p = products[editingProductKey];
+    title.textContent = "Mahsulotni tahrirlash";
+    document.getElementById("pName").value = p.name || "";
+    document.getElementById("pPrice").value = p.priceValue ? Number(p.priceValue).toLocaleString("en-US") : "";
+    document.getElementById("pSizes").value = p.sizes ? p.sizes.join(", ") : "";
+    document.getElementById("pDesc").value = p.desc || "";
+    if (p.image) {
+      preview.src = p.image;
+      preview.style.display = "block";
+    } else {
+      preview.style.display = "none";
+    }
+    delBtn.style.display = "block";
+  } else {
+    title.textContent = "Yangi mahsulot";
+    document.getElementById("pName").value = "";
+    document.getElementById("pPrice").value = "";
+    document.getElementById("pSizes").value = "";
+    document.getElementById("pDesc").value = "";
+    preview.style.display = "none";
+    delBtn.style.display = "none";
+  }
+  overlay.classList.remove("hidden");
+}
+
+function closeProductForm() {
+  document.getElementById("productOverlay").classList.add("hidden");
+  editingProductKey = null;
+  pendingImageData = null;
+}
+
+async function saveProduct() {
+  const name = document.getElementById("pName").value.trim();
+  const priceValue = parsePriceInput(document.getElementById("pPrice").value);
+  const desc = document.getElementById("pDesc").value.trim();
+  const sizesRaw = document.getElementById("pSizes").value.trim();
+  const sizes = sizesRaw ? sizesRaw.split(",").map(s => s.trim()).filter(Boolean) : [];
+
+  if (!name || !priceValue) {
+    showMsg("Iltimos, nomi va narxini kiriting.");
+    return;
+  }
+
+  const price = priceValue.toLocaleString("en-US") + " so'm";
+  let image = pendingImageData;
+  if (image === null && editingProductKey) {
+    image = products[editingProductKey].image || "";
+  }
+  if (image === null) image = "";
+
+  setStatus("Saqlanmoqda...", "");
+  try {
+    if (editingProductKey) {
+      await productsRef.child(editingProductKey).update({ name, price, priceValue, desc, image, sizes });
+    } else {
+      await productsRef.push({ name, price, priceValue, desc, image, sizes, ts: Date.now() });
+    }
+    setStatus("Saqlandi ✓", "ok");
+    setTimeout(() => setStatus("", ""), 1200);
+  } catch (e) {
+    setStatus("Xatolik: " + e.message, "fail");
+  }
+  closeProductForm();
+}
+
+async function deleteProduct() {
+  if (!editingProductKey) return;
+  try {
+    await productsRef.child(editingProductKey).remove();
+  } catch (e) {
+    setStatus("Xatolik: " + e.message, "fail");
+  }
+  closeProductForm();
+}
+
+// ====== BUYURTMA BERISH ======
+
+function openOrderForm(key) {
+  orderingProductKey = key;
+  selectedSize = null;
+  const p = products[key];
+  document.getElementById("orderProductLabel").textContent = p.name + " — " + p.price;
+
+  const sizeRow = document.getElementById("sizeFormRow");
+  const sizeBox = document.getElementById("sizeOptions");
+  if (p.sizes && p.sizes.length > 0) {
+    sizeRow.style.display = "block";
+    sizeBox.innerHTML = "";
+    p.sizes.forEach(sz => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = sz;
+      btn.onclick = () => selectSize(sz, btn);
+      sizeBox.appendChild(btn);
+    });
+  } else {
+    sizeRow.style.display = "none";
+  }
+
+  document.getElementById("oQty").value = "1";
+  document.getElementById("oName").value = "";
+  document.getElementById("oPhone").value = "";
+  document.getElementById("oAddress").value = "";
+  document.getElementById("orderOverlay").classList.remove("hidden");
+}
+
+function selectSize(sz, btn) {
+  selectedSize = sz;
+  document.querySelectorAll("#sizeOptions button").forEach(b => b.classList.remove("selected"));
+  btn.classList.add("selected");
+}
+
+function closeOrderForm() {
+  document.getElementById("orderOverlay").classList.add("hidden");
+  orderingProductKey = null;
+}
+
+async function submitOrder() {
+  if (isSubmittingOrder) return;
+
+  const p = products[orderingProductKey];
+  const name = document.getElementById("oName").value.trim();
+  const phoneDigits = document.getElementById("oPhone").value.replace(/[^0-9]/g, "");
+  const address = document.getElementById("oAddress").value.trim();
+  const qty = document.getElementById("oQty").value;
+
+  if (!name || phoneDigits.length < 9 || !address) {
+    showMsg("Iltimos, barcha maydonlarni to'liq kiriting.");
+    return;
+  }
+  if (p.sizes && p.sizes.length > 0 && !selectedSize) {
+    showMsg("Iltimos, o'lchamni tanlang.");
+    return;
+  }
+
+  const phone = "+998 " + document.getElementById("oPhone").value;
+
+  isSubmittingOrder = true;
+  const btn = document.getElementById("submitOrderBtn");
+  btn.disabled = true;
+  setStatus("Yuborilmoqda...", "");
+
+  const order = {
+    productName: p.name,
+    price: p.price,
+    image: p.image || "",
+    size: selectedSize || "",
+    qty: Number(qty),
+    customerName: name,
+    customerId: myId || "",
+    phone: phone,
+    address: address,
+    status: "new",
+    ts: Date.now()
+  };
+
+  try {
+    await ordersRef.push(order);
+    setStatus("Buyurtma qabul qilindi ✓", "ok");
+    if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
+    notifyAdmin(order);
+    setTimeout(() => setStatus("", ""), 2000);
+    closeOrderForm();
+  } catch (e) {
+    setStatus("Xatolik: " + e.message, "fail");
+  }
+
+  isSubmittingOrder = false;
+  btn.disabled = false;
+}
+
+function notifyAdmin(order) {
+  if (!adminId || !BOT_TOKEN) return;
+  const text =
+    "🛒 Yangi buyurtma!\n\n" +
+    "Mahsulot: " + order.productName + (order.size ? " (" + order.size + ")" : "") + "\n" +
+    "Soni: " + order.qty + "\n" +
+    "Narxi: " + order.price + "\n" +
+    "Xaridor: " + order.customerName + "\n" +
+    "Telefon: " + order.phone + "\n" +
+    "Manzil: " + order.address;
+
+  fetch("https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: adminId, text: text })
+  }).catch(() => {});
+}
+
+function notifyCustomerAccepted(order) {
+  if (!order.customerId || !BOT_TOKEN) return;
+  const text =
+    "✅ Buyurtmangiz qabul qilindi!\n\n" +
+    "Mahsulot: " + order.productName + (order.size ? " (" + order.size + ")" : "") + "\n" +
+    "Soni: " + order.qty + "\n" +
+    "Narxi: " + order.price;
+
+  fetch("https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: order.customerId, text: text })
+  }).catch(() => {});
+}
+</script>
+</body>
+</html>
