@@ -479,6 +479,7 @@
   <div id="viewerStage" style="width:100%; height:100%; overflow:hidden; touch-action:none; display:flex; align-items:center; justify-content:center;">
     <img id="viewerImage" style="width:100%; max-width:600px; will-change:transform;">
   </div>
+  <div id="viewerDots" style="position:fixed; bottom:22px; left:0; right:0; display:none; justify-content:center; gap:6px; z-index:21; pointer-events:none;"></div>
   <button onclick="closeImageViewer()" style="position:fixed; top:16px; right:16px; width:36px; height:36px; border-radius:50%; background:rgba(255,255,255,0.15); color:#fff; border:none; font-size:18px; cursor:pointer; z-index:21;">✕</button>
 </div>
 
@@ -942,22 +943,6 @@ function adminDeleteOrder(key) {
   }
 }
 
-function notifyCustomerCancelled(order) {
-  if (!order.customerId || !BOT_TOKEN) return;
-  const text =
-    "❌ Buyurtmangiz bekor qilindi.\n\n" +
-    (order.orderNumber ? "Buyurtma №" + order.orderNumber + "\n" : "") +
-    "Mahsulot: " + order.productName + ([order.size, order.color].filter(Boolean).join(", ") ? " (" + [order.size, order.color].filter(Boolean).join(", ") + ")" : "") + "\n" +
-    "Soni: " + order.qty + "\n" +
-    "Narxi: " + order.price;
-
-  fetch("https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: order.customerId, text: text })
-  }).catch(() => {});
-}
-
 function showView(v) {
   document.getElementById("productsView").style.display = v === "products" ? "grid" : "none";
   document.getElementById("ordersView").style.display = v === "orders" ? "block" : "none";
@@ -1064,14 +1049,17 @@ function openProductDetail(key) {
   const imgs = getProductImages(p);
   const gallery = document.getElementById("detailGallery");
   gallery.innerHTML = "";
+  gallery.scrollLeft = 0;
   if (imgs.length > 0) {
-    imgs.forEach(src => {
+    imgs.forEach((src, i) => {
       const im = document.createElement("img");
       im.src = src;
-      im.onclick = () => openImageViewer(src);
+      im.onclick = () => openImageViewer(imgs, i);
       gallery.appendChild(im);
     });
   }
+  // Har safar ochilganda albatta 1-rasmdan boshlansin
+  requestAnimationFrame(() => { gallery.scrollLeft = 0; });
 
   const dotsEl = document.getElementById("detailGalleryDots");
   dotsEl.innerHTML = "";
@@ -1106,12 +1094,15 @@ function closeProductDetail() {
   document.getElementById("productDetailOverlay").classList.add("hidden");
 }
 
-// ====== RASMNI QO'LDA KATTALASHTIRISH (pinch/pan/double-tap) ======
+// ====== RASMNI QO'LDA KATTALASHTIRISH (pinch/pan/double-tap) + rasmlar orasida svayp ======
 let vzScale = 1, vzPanX = 0, vzPanY = 0;
 let vzPinchStartDist = 0, vzPinchStartScale = 1;
 let vzDragging = false, vzDragStartX = 0, vzDragStartY = 0, vzDragStartPanX = 0, vzDragStartPanY = 0;
+let vzTouchStartX = 0, vzTouchStartY = 0;
 let vzLastTapTime = 0;
 let vzTouchHandlersBound = false;
+let vzImages = [];
+let vzIndex = 0;
 
 function vzApply() {
   document.getElementById("viewerImage").style.transform =
@@ -1132,6 +1123,40 @@ function vzDist(t1, t2) {
   return Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
 }
 
+function vzUpdateDots() {
+  const dotsEl = document.getElementById("viewerDots");
+  dotsEl.innerHTML = "";
+  if (!vzImages || vzImages.length <= 1) {
+    dotsEl.style.display = "none";
+    return;
+  }
+  dotsEl.style.display = "flex";
+  vzImages.forEach((_, i) => {
+    const dot = document.createElement("span");
+    dot.style.cssText = "width:6px; height:6px; border-radius:50%; background:" +
+      (i === vzIndex ? "#fff" : "rgba(255,255,255,0.35)") + ";";
+    dotsEl.appendChild(dot);
+  });
+}
+
+function vzShowIndex(i) {
+  if (!vzImages || vzImages.length === 0) return;
+  if (i < 0) i = 0;
+  if (i > vzImages.length - 1) i = vzImages.length - 1;
+  vzReset(false);
+  if (i === vzIndex) return;
+  vzIndex = i;
+  const img = document.getElementById("viewerImage");
+  img.style.transition = "opacity 0.15s";
+  img.style.opacity = "0";
+  setTimeout(() => {
+    img.src = vzImages[vzIndex];
+    img.style.opacity = "1";
+    setTimeout(() => { img.style.transition = ""; }, 150);
+  }, 150);
+  vzUpdateDots();
+}
+
 function vzBindHandlers() {
   if (vzTouchHandlersBound) return;
   vzTouchHandlersBound = true;
@@ -1143,12 +1168,16 @@ function vzBindHandlers() {
       vzPinchStartScale = vzScale;
       vzDragging = false;
     } else if (e.touches.length === 1) {
+      vzTouchStartX = e.touches[0].clientX;
+      vzTouchStartY = e.touches[0].clientY;
       if (vzScale > 1) {
         vzDragging = true;
         vzDragStartX = e.touches[0].clientX;
         vzDragStartY = e.touches[0].clientY;
         vzDragStartPanX = vzPanX;
         vzDragStartPanY = vzPanY;
+      } else {
+        vzDragging = false;
       }
     }
   }, { passive: true });
@@ -1168,13 +1197,20 @@ function vzBindHandlers() {
   }, { passive: false });
 
   stage.addEventListener("touchend", function (e) {
+    const wasDragging = vzDragging;
     vzDragging = false;
     if (vzScale <= 1.02) {
       vzReset(true);
     }
     if (e.touches.length === 0 && e.changedTouches.length === 1) {
+      const endX = e.changedTouches[0].clientX;
+      const endY = e.changedTouches[0].clientY;
+      const dx = endX - vzTouchStartX;
+      const dy = endY - vzTouchStartY;
       const now = Date.now();
-      if (now - vzLastTapTime < 300) {
+
+      if (now - vzLastTapTime < 300 && Math.abs(dx) < 10 && Math.abs(dy) < 10) {
+        // Ikki marta bosish — zoom qilish/qaytarish
         if (vzScale > 1) {
           vzReset(true);
         } else {
@@ -1184,18 +1220,29 @@ function vzBindHandlers() {
           vzApply();
           setTimeout(() => { img.style.transition = ""; }, 200);
         }
-      } else if (vzScale === 1) {
-        // Oddiy bosish — yopish
-        closeImageViewer();
+        vzLastTapTime = 0;
+      } else if (vzScale === 1 && !wasDragging && Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy)) {
+        // Yonga svayp — keyingi/oldingi rasmga o'tish
+        if (dx < 0) vzShowIndex(vzIndex + 1);
+        else vzShowIndex(vzIndex - 1);
+        vzLastTapTime = now;
+      } else {
+        // Oddiy bosish yoki kichik harakat — hech narsa qilinmaydi, faqat "X" yopadi
+        vzLastTapTime = now;
       }
-      vzLastTapTime = now;
     }
   });
 }
 
-function openImageViewer(src) {
-  document.getElementById("viewerImage").src = src;
+function openImageViewer(images, index) {
+  vzImages = Array.isArray(images) ? images : [images];
+  vzIndex = index || 0;
+  const img = document.getElementById("viewerImage");
+  img.style.transition = "";
+  img.style.opacity = "1";
+  img.src = vzImages[vzIndex];
   vzReset(false);
+  vzUpdateDots();
   vzBindHandlers();
   document.getElementById("imageViewerOverlay").classList.remove("hidden");
 }
@@ -1288,6 +1335,7 @@ function openOrderConfirm() {
     qty: qty,
     customerName: name,
     customerId: myId || "",
+    customerUsername: (tgUser && tgUser.username) ? tgUser.username : "",
     phone: phone,
     address: address,
     status: "new",
@@ -1360,6 +1408,7 @@ function notifyAdmin(order) {
     "Soni: " + order.qty + "\n" +
     "Narxi: " + order.price + "\n" +
     "Xaridor: " + order.customerName + "\n" +
+    (order.customerUsername ? "Akkaunt: @" + order.customerUsername + "\n" : "") +
     "Telefon: " + order.phone + "\n" +
     "Manzil: " + order.address;
 
@@ -1370,14 +1419,17 @@ function notifyAdmin(order) {
   }).catch(() => {});
 }
 
-function notifyCustomerAccepted(order) {
+function sendCustomerStatusMessage(order, statusLine) {
   if (!order.customerId || !BOT_TOKEN) return;
   const text =
-    "✅ Buyurtmangiz qabul qilindi!\n\n" +
+    "Buyurtmangiz\n" +
     (order.orderNumber ? "Buyurtma №" + order.orderNumber + "\n" : "") +
     "Mahsulot: " + order.productName + ([order.size, order.color].filter(Boolean).join(", ") ? " (" + [order.size, order.color].filter(Boolean).join(", ") + ")" : "") + "\n" +
     "Soni: " + order.qty + "\n" +
-    "Narxi: " + order.price;
+    "Narxi: " + order.price + "\n" +
+    "Telefon: " + order.phone + "\n" +
+    "Manzil: " + order.address + "\n\n" +
+    "Buyurtma holati: " + statusLine;
 
   fetch("https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage", {
     method: "POST",
@@ -1385,6 +1437,15 @@ function notifyCustomerAccepted(order) {
     body: JSON.stringify({ chat_id: order.customerId, text: text })
   }).catch(() => {});
 }
+
+function notifyCustomerAccepted(order) {
+  sendCustomerStatusMessage(order, "✅ Qabul qilingan");
+}
+
+function notifyCustomerCancelled(order) {
+  sendCustomerStatusMessage(order, "❌ Bekor qilindi");
+}
+
 </script>
 </body>
 </html>
