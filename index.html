@@ -7,6 +7,7 @@
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-storage-compat.js"></script>
 <style>
   * { box-sizing: border-box; touch-action: manipulation; }
   body {
@@ -533,6 +534,7 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
+const storage = firebase.storage();
 const shopRef = db.ref("shop");
 const productsRef = shopRef.child("products");
 const ordersRef = shopRef.child("orders");
@@ -563,6 +565,7 @@ let adminId = null;
 let isAdmin = false;
 let editingProductKey = null;
 let pendingImages = [];
+let imagesToDeleteOnSave = [];
 let orderingProductKey = null;
 let selectedSize = null;
 let selectedColor = null;
@@ -601,7 +604,7 @@ function getFullPhone() {
   return "+998 " + document.getElementById("oPhone").value;
 }
 
-// ====== RASMLAR YUKLASH (bir nechtasi) ======
+// ====== RASMLAR YUKLASH (bir nechtasi) — Firebase Storage'ga yuklanadi ======
 function onImageFileChange(event) {
   const files = Array.from(event.target.files || []);
   if (files.length === 0) return;
@@ -618,9 +621,13 @@ function onImageFileChange(event) {
         canvas.height = Math.round(img.height * scale);
         const ctx = canvas.getContext("2d");
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
-        pendingImages.push(dataUrl);
+        const localPreview = canvas.toDataURL("image/jpeg", 0.7);
+        const item = { previewSrc: localPreview, url: "", uploading: true, progress: 0, error: false };
+        pendingImages.push(item);
         renderImagePreviews();
+        canvas.toBlob(function (blob) {
+          uploadImageBlob(blob, item);
+        }, "image/jpeg", 0.7);
       };
       img.src = ev.target.result;
     };
@@ -629,20 +636,59 @@ function onImageFileChange(event) {
   event.target.value = "";
 }
 
+function uploadImageBlob(blob, item) {
+  const fileName = "shop_images/" + Date.now() + "_" + Math.random().toString(36).slice(2, 9) + ".jpg";
+  const ref = storage.ref().child(fileName);
+  const task = ref.put(blob, { contentType: "image/jpeg" });
+  task.on("state_changed", (snap) => {
+    item.progress = snap.totalBytes ? Math.round((snap.bytesTransferred / snap.totalBytes) * 100) : 0;
+    renderImagePreviews();
+  }, (err) => {
+    item.uploading = false;
+    item.error = true;
+    renderImagePreviews();
+    showMsg("Rasm yuklashda xatolik: " + err.message);
+  }, () => {
+    task.snapshot.ref.getDownloadURL().then((url) => {
+      item.url = url;
+      item.uploading = false;
+      item.progress = 100;
+      renderImagePreviews();
+    });
+  });
+}
+
 function renderImagePreviews() {
   const row = document.getElementById("pImagePreviewRow");
   row.innerHTML = "";
-  pendingImages.forEach((src, idx) => {
+  pendingImages.forEach((item, idx) => {
     const div = document.createElement("div");
     div.className = "previewThumb";
-    div.innerHTML = '<img src="' + src + '"><button type="button" class="rm" onclick="removePendingImage(' + idx + ')">✕</button>';
+    let html = '<img src="' + (item.previewSrc || item.url) + '">';
+    if (item.uploading) {
+      html += '<div style="position:absolute; inset:0; background:rgba(0,0,0,0.4); border-radius:8px; display:flex; align-items:center; justify-content:center; color:#fff; font-size:11px; font-weight:700;">' + (item.progress || 0) + '%</div>';
+    } else if (item.error) {
+      html += '<div style="position:absolute; inset:0; background:rgba(231,76,60,0.55); border-radius:8px; display:flex; align-items:center; justify-content:center; color:#fff; font-size:10px; font-weight:700; text-align:center;">Xatolik</div>';
+    }
+    html += '<button type="button" class="rm" onclick="removePendingImage(' + idx + ')">✕</button>';
+    div.innerHTML = html;
     row.appendChild(div);
   });
 }
 
 function removePendingImage(idx) {
+  const item = pendingImages[idx];
   pendingImages.splice(idx, 1);
   renderImagePreviews();
+  if (item && item.url) {
+    if (item.existing) {
+      // Bazadagi eski rasm — faqat "Saqlash" bosilganda o'chiriladi (Bekor qilinsa, o'chmasin)
+      imagesToDeleteOnSave.push(item.url);
+    } else {
+      // Shu seansda yangi yuklangan, hali bazaga yozilmagan rasm — darhol tozalanadi
+      try { storage.refFromURL(item.url).delete().catch(() => {}); } catch (e) {}
+    }
+  }
 }
 
 // ====== ADMIN BELGILASH ======
@@ -957,6 +1003,7 @@ function showView(v) {
 function openProductForm(key) {
   editingProductKey = key || null;
   pendingImages = [];
+  imagesToDeleteOnSave = [];
   const overlay = document.getElementById("productOverlay");
   const title = document.getElementById("productFormTitle");
   const delBtn = document.getElementById("deleteProductBtn");
@@ -971,7 +1018,7 @@ function openProductForm(key) {
     document.getElementById("pSizes").value = p.sizes ? p.sizes.join(", ") : "";
     document.getElementById("pColors").value = p.colors ? p.colors.join(", ") : "";
     document.getElementById("pDesc").value = p.desc || "";
-    pendingImages = getProductImages(p).slice();
+    pendingImages = getProductImages(p).map(url => ({ previewSrc: url, url: url, uploading: false, progress: 100, error: false, existing: true }));
     delBtn.style.display = "block";
   } else {
     title.textContent = "Yangi mahsulot";
@@ -987,10 +1034,19 @@ function openProductForm(key) {
   overlay.classList.remove("hidden");
 }
 
-function closeProductForm() {
+function closeProductForm(skipCleanup) {
+  if (!skipCleanup) {
+    // Bekor qilinganda: shu seansda yuklab, keyin saqlanmagan rasmlarni Storage'dan tozalash
+    pendingImages.forEach(item => {
+      if (item && item.url && !item.existing) {
+        try { storage.refFromURL(item.url).delete().catch(() => {}); } catch (e) {}
+      }
+    });
+  }
   document.getElementById("productOverlay").classList.add("hidden");
   editingProductKey = null;
   pendingImages = [];
+  imagesToDeleteOnSave = [];
 }
 
 function getProductImages(p) {
@@ -1013,9 +1069,13 @@ async function saveProduct() {
     showMsg("Iltimos, nomi va narxini kiriting.");
     return;
   }
+  if (pendingImages.some(pi => pi.uploading)) {
+    showMsg("Rasmlar hali yuklanmoqda, biroz kuting.");
+    return;
+  }
 
   const price = priceValue.toLocaleString("en-US") + " so'm";
-  const images = pendingImages.slice();
+  const images = pendingImages.map(pi => pi.url).filter(Boolean);
 
   setStatus("Saqlanmoqda...", "");
   try {
@@ -1024,18 +1084,27 @@ async function saveProduct() {
     } else {
       await productsRef.push({ name, price, priceValue, delivery, desc, images, sizes, colors, image: images[0] || "", ts: Date.now() });
     }
+    // Saqlash muvaffaqiyatli bo'lgach, o'chirilgan eski rasmlarni Storage'dan tozalaymiz
+    imagesToDeleteOnSave.forEach(url => {
+      try { storage.refFromURL(url).delete().catch(() => {}); } catch (e) {}
+    });
     setStatus("Saqlandi ✓", "ok");
     setTimeout(() => setStatus("", ""), 1200);
   } catch (e) {
     setStatus("Xatolik: " + e.message, "fail");
   }
-  closeProductForm();
+  closeProductForm(true);
 }
 
 async function deleteProduct() {
   if (!editingProductKey) return;
   try {
+    const p = products[editingProductKey];
+    const imgs = p ? getProductImages(p) : [];
     await productsRef.child(editingProductKey).remove();
+    imgs.forEach(url => {
+      try { storage.refFromURL(url).delete().catch(() => {}); } catch (e) {}
+    });
   } catch (e) {
     setStatus("Xatolik: " + e.message, "fail");
   }
